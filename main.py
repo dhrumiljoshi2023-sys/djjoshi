@@ -1,8 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2 import OperationalError
+import psycopg
+from psycopg.rows import dict_row
 import os
 from contextlib import contextmanager
 
@@ -20,19 +19,17 @@ def get_conn():
     """Context manager for database connections with proper error handling"""
     conn = None
     try:
-        # Render PostgreSQL requires SSL, but psycopg2 handles it automatically
-        # If you get SSL errors, you may need to add: sslmode='require'
-        conn = psycopg2.connect(
+        # psycopg3 (psycopg) has better Python 3.13 support
+        conn = psycopg.connect(
             host=os.environ.get("DB_HOST"),
-            database=os.environ.get("DB_NAME"),
+            dbname=os.environ.get("DB_NAME"),
             user=os.environ.get("DB_USER"),
             password=os.environ.get("DB_PASSWORD"),
             port=os.environ.get("DB_PORT", "5432"),
-            cursor_factory=RealDictCursor,
             connect_timeout=10
         )
         yield conn
-    except OperationalError as e:
+    except psycopg.OperationalError as e:
         raise HTTPException(
             status_code=500, 
             detail=f"Database connection error: {str(e)}"
@@ -60,7 +57,7 @@ def health_check():
     try:
         # Test database connection
         with get_conn() as conn:
-            cur = conn.cursor()
+            cur = conn.cursor(row_factory=dict_row)
             cur.execute("SELECT 1")
             cur.fetchone()
         return {"status": "healthy", "database": "connected"}
@@ -72,7 +69,7 @@ def health_check():
 @app.get("/employees")
 def get_all():
     with get_conn() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute("SELECT * FROM employees ORDER BY id")
         data = cur.fetchall()
         return data
@@ -82,7 +79,7 @@ def get_all():
 @app.get("/employees/{emp_id}")
 def get_by_id(emp_id: int):
     with get_conn() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute("SELECT * FROM employees WHERE id=%s", (emp_id,))
         data = cur.fetchone()
         
@@ -95,7 +92,7 @@ def get_by_id(emp_id: int):
 @app.post("/employees")
 def insert_employee(emp: Emp):
     with get_conn() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute(
             "INSERT INTO employees (name, salary) VALUES (%s, %s) RETURNING id",
             (emp.name, emp.salary)
@@ -109,7 +106,7 @@ def insert_employee(emp: Emp):
 @app.put("/employees/{emp_id}")
 def update_employee(emp_id: int, emp: Emp):
     with get_conn() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute(
             "UPDATE employees SET name=%s, salary=%s WHERE id=%s",
             (emp.name, emp.salary, emp_id)
@@ -127,7 +124,7 @@ def update_employee(emp_id: int, emp: Emp):
 @app.delete("/employees/{emp_id}")
 def delete_employee(emp_id: int):
     with get_conn() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute("DELETE FROM employees WHERE id=%s", (emp_id,))
         conn.commit()
         affected = cur.rowcount
